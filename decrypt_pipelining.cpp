@@ -147,6 +147,30 @@ void decrypt_file(FILE *cryptedFile, FILE *decryptedFile, uint32_t rounds, uint3
         cout << endl;
 }
 
+/*********************************************
+Funcion de desencripcion por bloque, realizando 
+toda la logica de DES
+
+@params: start (time), end (time), 
+        diff (time)
+@return: int
+*********************************************/
+int calculate_diff_time(timespec start, timespec end, timespec &diff)
+{
+
+        if ((end.tv_nsec - start.tv_nsec) < 0)
+        {
+                calculate_diff_time.tv_sec = end.tv_sec - start.tv_sec - 1;
+                calculate_diff_time.tv_nsec = 1000000000 + end.tv_nsec - start.tv_nsec;
+        }
+        else
+        {
+                calculate_diff_time.tv_sec = end.tv_sec - start.tv_sec;
+                calculate_diff_time.tv_nsec = end.tv_nsec - start.tv_nsec;
+        }
+        return 0;
+}
+
 /************************************
 *
 *                MAIN
@@ -154,7 +178,9 @@ void decrypt_file(FILE *cryptedFile, FILE *decryptedFile, uint32_t rounds, uint3
 ************************************/
 int main(int argc, char *argv[])
 {
+        // Estructuras que contiene un intervalo dividido en segundos y nanosegundos
         timespec t1, t2, diff_t;
+        // Declaracion de archivos
         FILE *cryptedFile, *decryptedFile;
 
         // Verificar si los parametros pasados son correctos
@@ -184,7 +210,7 @@ int main(int argc, char *argv[])
         clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &t2);
 
         //Estableciendo lapso de tiempo empleado al desencriptar
-        diff(t1, t2, diff_t);
+        calculate_diff_time(t1, t2, diff_t);
 
         // Prints del tiempo empleado, 
         int sec = diff_t.tv_sec;
