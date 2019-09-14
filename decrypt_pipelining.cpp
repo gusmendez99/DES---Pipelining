@@ -41,19 +41,7 @@ uint32_t KEYS[ROUNDS] = {
     0xFF91B5F5,
     0xF9281A0E,
     0x84282A36,
-    0xE8D63C4A,
-    0x0C402C6F,
-    0x2296CB30,
-    0x9FF9D76E,
-    0x243A5572,
-    0xA4AE9DD0,
-    0x999F201E,
-    0x9A0CB9A5,
-    0x349968F5,
-    0x62FD58D0,
-    0x339DFC3C,
-    0x4815AD1E,
-    0x7312DEAD
+    0xE8D63C4A
 };
 
 /*********************************************
@@ -147,29 +135,6 @@ void decrypt_file(FILE *cryptedFile, FILE *decryptedFile, uint32_t rounds, uint3
         cout << endl;
 }
 
-/*********************************************
-Funcion de desencripcion por bloque, realizando 
-toda la logica de DES
-
-@params: start (time), end (time), 
-        diff (time)
-@return: int
-*********************************************/
-int calculate_diff_time(timespec start, timespec end, timespec &diff)
-{
-
-        if ((end.tv_nsec - start.tv_nsec) < 0)
-        {
-                calculate_diff_time.tv_sec = end.tv_sec - start.tv_sec - 1;
-                calculate_diff_time.tv_nsec = 1000000000 + end.tv_nsec - start.tv_nsec;
-        }
-        else
-        {
-                calculate_diff_time.tv_sec = end.tv_sec - start.tv_sec;
-                calculate_diff_time.tv_nsec = end.tv_nsec - start.tv_nsec;
-        }
-        return 0;
-}
 
 /************************************
 *
@@ -178,8 +143,6 @@ int calculate_diff_time(timespec start, timespec end, timespec &diff)
 ************************************/
 int main(int argc, char *argv[])
 {
-        // Estructuras que contiene un intervalo dividido en segundos y nanosegundos
-        timespec t1, t2, diff_t;
         // Declaracion de archivos
         FILE *cryptedFile, *decryptedFile;
 
@@ -202,21 +165,15 @@ int main(int argc, char *argv[])
         }
         
         cout << "Abriendo archivo encriptado " << argv[1] << ", detectado correctamente" << endl;
+        //Abriendo archivo para escribir mensaje desencriptado en el mismo
         decryptedFile = fopen("decryptedFile.txt", "w");
         
-        // Calculando el tiempo del programa
-        clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &t1);
+        // Declaracion del tiempo cuando comienza el programa
+        clock_t tStart = clock();
         decrypt_file(cryptedFile, decryptedFile, ROUNDS, KEYS);
-        clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &t2);
-
         //Estableciendo lapso de tiempo empleado al desencriptar
-        calculate_diff_time(t1, t2, diff_t);
+        printf("[!] Tiempo empleado: %.3fs\n", (double)(clock() - tStart)/CLOCKS_PER_SEC);
 
-        // Prints del tiempo empleado, 
-        int sec = diff_t.tv_sec;
-        int ns = diff_t.tv_nsec;
-
-        printf("[!] Tiempo empleado: \t%d.%d\n", sec, ns);
         cout << ">>> El archivo ha sido desencriptado, archivo: decryptedFile.txt!" << endl;
 
         //Cierre seguro de archivos usados
