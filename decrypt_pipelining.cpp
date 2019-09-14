@@ -29,20 +29,37 @@ USO: $ ./modulo archivoEncriptado
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <pthread.h>
 
 using namespace std;
 
 //Definiciones del algoritmo DES de desencripcion
-#define ROUNDS 4
-#define BLOCK_CAPACITY 8
+#define ROUNDS 4                
+#define BLOCK_CAPACITY 8        //Bytes
+#define THREADS 3               
 
-//Declaracion de llaves
-uint32_t KEYS[ROUNDS] = {
-    0xFF91B5F5,
-    0xF9281A0E,
-    0x84282A36,
-    0xE8D63C4A
-};
+//Declaracion de estructura para pasar parametros entre pthreads
+struct data_decrypt {
+        // Declaracion de contenido encriptado
+	uint32_t leftSide;
+	uint32_t rightSide;
+	uint32_t round;
+
+	//Declaracion de llaves
+        uint32_t KEYS[ROUNDS] = {
+                0xFF91B5F5,
+                0xF9281A0E,
+                0x84282A36,
+                0xE8D63C4A
+        };
+
+} ;
+
+// Pthreads y variables condicionales
+pthread_mutex_t decrypt_lock;
+pthread_cond_t decrypt_threshold_cv;
+
+
 
 /*********************************************
 Funcion XOR para la operacion de la misma entre 
@@ -91,6 +108,25 @@ uint64_t decrypt(uint32_t leftSide, uint32_t rightSide, uint32_t rounds, uint32_
 }
 
 /*********************************************
+Funcion realizada por los pthreads para desencriptar
+
+@params: currentData (puntero)
+@return: void
+*********************************************/
+
+void* decryptThread(void *currentData)
+{
+
+	pthread_mutex_lock(&decrypt_lock);
+	struct data_decrypt *threadData = (struct data_decrypt *)currentData;
+	pthread_mutex_unlock(&decrypt_lock);
+	pthread_exit((void *) (uintptr_t) decrypt(threadData->leftSide, threadData->rightSide, threadData->round, threadData->KEYS));
+
+}
+
+
+
+/*********************************************
 Funcion de desencripcion por bloque, realizando 
 toda la logica de DES
 
@@ -100,38 +136,61 @@ toda la logica de DES
 *********************************************/
 void decrypt_file(FILE *cryptedFile, FILE *decryptedFile, uint32_t rounds, uint32_t keys[])
 {       
-        bool isFirstTime = true;
-        uint32_t leftSide, rightSide;
-        size_t resultado;
-        uint64_t currBlock, prevBlock, saved;
+        // Declaracion de estructura
+        data_decrypt decryptDataParams;
+        uint64_t prevBlock = 0xF0CCFACE;
+        //Declaracion de variables iniciales
+	void * returnData;        
+	size_t result;
+	uint64_t currentBlock;
+	int rc;
+
         cout << ">>> Desencriptando...";
         // Mientas el archivo contenga texto, se leera
         while (!feof(cryptedFile))   
         {
-                cout << ". ";
-                resultado = fread(&currBlock, 1, BLOCK_CAPACITY, cryptedFile);
-                saved = currBlock;
+                //cout << ". ";
+                // Leer 8 bytes del archivo ingresado.
+                result = fread(&currBlock, 1, BLOCK_CAPACITY, cryptedFile);
+                // XOR bit a bit con bloque anterior
+                currentBlock ^= prevBlock;
                 // Corrimiento de 32 bits y realizacion de un AND para hallar el lado izquierdo 
-                leftSide = (currBlock >> 32) & 0xFFFFFFFF;
+                decryptDataParams.leftSide = (currBlock >> 32) & 0xFFFFFFFF;
                 // Realizacion de un AND para hallar el lado derecho
-                rightSide = currBlock & 0xFFFFFFFF;
-                // Se desencripta la linea actual, segun el lado der. e izq. pasados como parametro
-                currBlock = decrypt(leftSide, rightSide, ROUNDS, keys);
-                // Como no hay bloque previo en el primer intento, se realiza un if
-                if (isFirstTime)
+                decryptDataParams.rightSide = currBlock & 0xFFFFFFFF;
+                decryptDataParams.round = rounds;
+                
+        }
+
+        //Implementacion de threads
+        pthread_t threads[THREADS];
+
+        if (pthread_mutex_init(&decrypt_lock, NULL) != 0)
+        {
+                printf("\nInicio de mutex fallido\n");
+        }
+
+        for (int i = 0; i < THREADS; i++)
+        {
+                rc = pthread_create(&threads[i], NULL, decryptThread, (void *)&decryptDataParams);
+
+                if (rc)
                 {
-                        currBlock ^= 0xF0CCFACE;
-                        isFirstTime = false;
+                        printf("\nNo se ha podido crear thread :[%s]", rc);
+                        exit(-1);
                 }
-                else
-                {
-                        currBlock ^= prevBlock;
-                }
-                //Asignacion, bloque anterior como el bloque salvado anteriormente
-                prevBlock = saved;
+        }
+
+        for (int i = 0; i <= THREADS; i++)
+        {
+                pthread_join(threads[i], &returnData);
+                currentBlock = *(uint64_t *)returnData;
                 // Escritura del bloque de regreso en el archivo desencriptado
                 fwrite(&currBlock, 1, BLOCK_CAPACITY, decryptedFile);
         }
+
+        pthread_mutex_destroy(&decrypt_lock);
+        pthread_exit(NULL);
         cout << endl;
 }
 
@@ -145,6 +204,14 @@ int main(int argc, char *argv[])
 {
         // Declaracion de archivos
         FILE *cryptedFile, *decryptedFile;
+        size_t result;
+
+        uint32_t KEYS[ROUNDS] = {
+		0xFF91B5F5,
+		0xF9281A0E,
+		0x84282A36,
+		0xE8D63C4A
+	};
 
         // Verificar si los parametros pasados son correctos
         if (argc != 2)
