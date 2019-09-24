@@ -8,7 +8,9 @@ DES algorithm implementation with pipelining, pthreads and conditional variables
 
 * How to run the program
 ```
-$ ./module encryptedFile
+$ ./g++ des-pipeline.cpp -o des -lpthread
+$ ./des -e text.txt crypt.cry keys.txt
+$ ./des -d crypt.cry text.txt keys.txt
 ```
 
 ## Authors
@@ -16,5 +18,4 @@ $ ./module encryptedFile
 * Roberto Figueroa
 
 ## License
-
 This project is licensed under the MIT License
