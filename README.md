@@ -13,9 +13,15 @@ $ ./des -e text.txt crypt.cry keys.txt
 $ ./des -d crypt.cry text.txt keys.txt
 ```
 
+Commands:
+* -e: encrypt
+* -d: decrypt
+
 ## Authors
 * Gustavo Mendez
+* Gerardo Mendez
 * Roberto Figueroa
+* Diego Estrada
 
 ## License
 This project is licensed under the MIT License
