@@ -748,10 +748,21 @@ long int findFileSize()
 		perror("fseek() failed");
 	else //con la funcion ftell() se contara el núero de caracteres dentro del archivo
 		size = ftell(inp);
+	
+	//Si el archivo tiene una cantidad de bits que no es divisible entre 8, se rellena con espacios
+	int count_space = 8 - (size % 8);
+	if(size % 8 != 0){
+		int i = 0;
+		while(i < count_space) {
+			fprintf(inp, "%c", " ");
+			i++;
+		}
+	}
 	//cierre del archivo
 	fclose(inp);
 	//retorno
-	return size;
+	long int totalSize = (size + count_space);
+	return  totalSize;
 }
 
 
