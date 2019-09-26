@@ -9,13 +9,8 @@ DES algorithm implementation with pipelining, pthreads and conditional variables
 * How to run the program
 ```
 $ ./g++ des-pipeline.cpp -o des -lpthread
-$ ./des -e text.txt crypt.cry keys.txt
-$ ./des -d crypt.cry text.txt keys.txt
+$ ./des -d crypted.cry decrypt.txt keys.txt
 ```
-
-Commands:
-* -e: encrypt
-* -d: decrypt
 
 ## Authors
 * Gustavo Mendez

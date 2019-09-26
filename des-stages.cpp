@@ -2,22 +2,28 @@
 UNIVERSIDAD DEL VALLE DE GUATEMALA
 CC3056 - Programación de Microprocesadores
 Ciclo 2 - 2019
-Autores: Gerardo Méndez y Diego Estrada
-Fecha: 24/09/2019
-Archivo: encrypt_pipelining.cpp
-------------------Descripcion--------------------
-    PROYECTO 3 - Encripción DES utilizando 4 rondas, 
-    longitud de bloque 8. Se compila desde terminal de
-    Raspberry
----------------------Build-----------------------
- 	$ ./des -d inputFile outputFile keys
-	$ ./des -e inputFile outputFile keys
---------------------Pendiente---------------------
-- Implementar variables mutex
+
+Autores: Gustavo Mendez y Roberto Figueroa
+Fecha: 10/09/2019
+Archivo: decrypt_pipelining.cpp
+Descripcion: PROYECTO 3 - Desencripcion DES hecho con 4 rondas, 
+        tamanio de bloque de 8 y el archivo compilado 
+        es usado como comando de linea en la CLI de 
+        la RPI.
+
+---------------------USO-----------------------
+USO: 	$ ./des -d inputFile outputFile keys
+		$ ./des -e inputFile outputFile keys
+
+--------------------TODOS----------------------
+- Implementacion de variables condicionales
+- Establecimiento de las 3 fases de pipelining,
+        conforme la encriptacion demanda.
+
 **********************************************/
 
-#include <stdio.h>
-#include <stdarg.h>
+#include <stdio.h>      /* printf */
+#include <stdarg.h>     /* va_list, va_start, va_arg, va_end */
 #include <stdlib.h>
 #include <ctype.h>
 #include <math.h>
@@ -25,15 +31,25 @@ Archivo: encrypt_pipelining.cpp
 #include <string.h>
 #include <string>
 #include <pthread.h>
+
 using namespace std;
 
-static string INPUT_FILENAME, OUTPUT_FILENAME, KEYS_FILENAME, BINARY_FILENAME = "bits.txt", BINARY_FILENAME_SECOND = "bitsDecrypt.txt";
+static string INPUT_FILENAME, OUTPUT_FILENAME, KEYS_FILENAME, 
+		BINARY_FILENAME = "bits.txt", BINARY_FILENAME_SECOND = "bitsDecrypt.txt";
+
+static int FILE_INPUT_SIZE;
+
 FILE *input, *output, *keys, *binary;
 #define BLOCK_CAPACITY 8        //Bytes
 #define THREADS 3 
 #define ROUNDS 16
 #define ACTION_ENCRYPT "-e"
 #define ACTION_DECRYPT "-d"
+
+pthread_mutex_t pipeline_mutex1, pipeline_mutex2;
+pthread_cond_t stage1, stage2;
+pthread_t threads[3];
+pthread_attr_t attr;
 
 const char HELP[] =
   "\n"
@@ -190,8 +206,6 @@ int PC2[] =
 int SHIFTS[] = { 1, 1, 2, 2, 2, 2, 2, 2, 1, 2, 2, 2, 2, 2, 2, 1 };
 
 FILE* out;
-int backup[17][2];
-int C[17][28], D[17][28];
 int LEFT[17][32], RIGHT[17][32];
 int IPtext[64];
 int EXPtext[48];
@@ -203,16 +217,11 @@ int key56bit[56];
 int key48bit[17][48];
 int CIPHER[64];
 int ENCRYPTED[64];
-int CD[17][56];
-pthread_t ptids[ROUNDS*2];
-pthread_mutex_t mutexLock;
-pthread_cond_t decrypt_cv;
-pthread_attr_t attr;
 
 /*
-Nombre: expansion_function
-Parámetros: posicion, valor
-Objetivo: expandir cadena hasta 48 bits
+-Funcion para que expande la cadena de 32 a 48 bits
+-Parametro : posición y valor
+-Retorno : --
 */
 void expansion_function(int pos, int text)
 {
@@ -222,9 +231,9 @@ void expansion_function(int pos, int text)
 }
 
 /*
-Nombre: initialPermitation
-Parámetros: posición, valor
-Objetivo: realizar permutación inicial de Data Encryption Standard
+-Funcion que realiza la permutación inicial de DES
+-Parametro : posicion, valor
+-Retorno : --
 */
 int initialPermutation(int pos, int text)
 {
@@ -236,9 +245,9 @@ int initialPermutation(int pos, int text)
 }
 
 /*
-Nombre: F1
-Parámetros: index
-Objetivo: asignar S-box
+-Funcion que permite determinar la S-box correspondinete
+-Parametro : indice del ciclo (entero)
+-Retorno : --
 */
 int F1(int i)
 {
@@ -267,9 +276,9 @@ int F1(int i)
 }
 
 /*
-Nombre: XOR
-Parámetros: a (cadena), b(key)
-Objetivo: realizar un XOR entre dos datos
+-Funcion para aplicar la operación XOR a dos valores
+-Parametro : valor de la cadena y valor de la llave
+-Retorno : XOR entre valor 1 y valor 2
 */
 int XOR(int a, int b)
 {
@@ -277,9 +286,9 @@ int XOR(int a, int b)
 }
 
 /*
-Nombre: ToBits
-Parámetros: valor entero
-Objetivo: convertir a bits el entero provisto
+-Funcion para convertir a bits el valor dado
+-Parametro : valor a convertir a bits
+-Retorno : --
 */
 int ToBits(int value)
 {
@@ -300,19 +309,19 @@ int ToBits(int value)
 }
 
 /*
-Nombre: SBox
-Parámetros: cadena de 48 bit
-Objetivo: utilizar SBox a una cadena
+-Funcion para aplicar a una cadena la función S-Box 
+-Parametro : cadena de 48 bits 
+-Retorno : --
 */
 int SBox(int XORtext[])
 {
 	int k = 0;
-	for (int i = 0; i < 8; i++)
+	for (int i = 0; i < BLOCK_CAPACITY; i++)
 		for (int j = 0; j < 6; j++)
 			X[i][j] = XORtext[k++];
 
 	int value;
-	for (int i = 0; i < 8; i++) 
+	for (int i = 0; i < BLOCK_CAPACITY; i++) 
 	{
 		value = F1(i);
 		ToBits(value);
@@ -320,9 +329,9 @@ int SBox(int XORtext[])
 }
 
 /*
-Nombre: PBox
-Parámetros: posición, valor
-Objetivo: Reorganización con P[]
+-Funcion que reordena en función al arreglo P[]
+-Parametro : posición y valor
+-Retorno : --
 */
 int PBox(int pos, int text)
 {
@@ -334,14 +343,13 @@ int PBox(int pos, int text)
 }
 
 /*
-Nombre: cipher
-Parámetros: ronda, tipo de cifrado
-Objetivo: Cifrar cadena (right)
+-Funcion que cifra la cadena derecha
+-Parametro : el número de ronda, modo de cifrado
+-Retorno : --
 */
-void cipher(long k)
+void cipher(int Round, int mode)
 {
-	long Round = (long) k;
- 	//Se realiza la expasión para aumentar la cadena de 32 a 48 bits y así pode aplicarle
+	//Se realiza la expasión para aumentar la cadena de 32 a 48 bits y así pode aplicarle
 	//la llave que también es de 48 bits con un XOR
 	for (int i = 0; i < 32; i++)
 		expansion_function(i, RIGHT[Round - 1][i]);
@@ -350,9 +358,12 @@ void cipher(long k)
 	//correspondiente a la ronda
 	for (int i = 0; i < 48; i++) 
 	{
-		XORtext[i] = XOR(EXPtext[i], key48bit[17 - Round][i]);
+		if (mode == 0)
+			XORtext[i] = XOR(EXPtext[i], key48bit[Round][i]);
+		else
+			XORtext[i] = XOR(EXPtext[i], key48bit[17 - Round][i]);
 	}
-    
+
 	//Aplicación de S-box a la cadena con XOR aplicado
 	SBox(XORtext);
 
@@ -365,9 +376,9 @@ void cipher(long k)
 }
 
 /*
-Nombre: finalPermutation
-Parámetros: posicion, valor
-Objetivo: permutar cadena para encriptar
+-Funcion para realizar la permjutación final DES
+-Parametro : posición y valor
+-Retorno : --
 */
 void finalPermutation(int pos, int text)
 {
@@ -380,9 +391,9 @@ void finalPermutation(int pos, int text)
 }
 
 /*
-Nombre: convertToBinary
-Parámetros: entero a convertir
-Objetivo: pasar un entero a binario
+-Funcion para convertir un caracter en binario
+-Parametro : caracter a convertir
+-Retorno : --
 */
 void convertToBinary(int n)
 {
@@ -401,11 +412,11 @@ void convertToBinary(int n)
 }
 
 /*
-Nombre: convertCharToBit
-Parámetros: numero de caracteres en el archivo de entrada
-Objetivo: realizar la conversión de los caracteres del archivo de entrada a numeros binarios.
+-Funcion para convertir los caracteres del archivo input en numero binarios
+-Parametro : 
+-Retorno : --
 */
-int convertCharToBit(long int n)
+int convertCharToBit()
 {
 	//Se abre el archivo de entrada como lectura
 	FILE* inp = fopen(INPUT_FILENAME.c_str(), "rb");
@@ -413,7 +424,7 @@ int convertCharToBit(long int n)
 	binary = fopen(BINARY_FILENAME.c_str(), "wb+");
 	char ch;
 	//Se multiplica por 8 para determinar la cantidad total de caracteres en el archivo de entrada
-	int i = n * 8;
+	int i = FILE_INPUT_SIZE * BLOCK_CAPACITY;
 	while (i) 
 	{
 		//Se lee caracter por caracter el archivo de entrada gracias a al función fgetc()
@@ -429,35 +440,35 @@ int convertCharToBit(long int n)
 }
 
 /*
--Funcion para desencriptar una cadena
--Parametro : cadena de bits plana
+-Funcion para encriptar utilizando el algoritmo DES
+-Parametro : arreglo con los numeros en binario
 -Retorno : --
 */
-void Decryption(long int plain[])
+void Encryption(long int plain[])
 {
-	//se abre el archivo que contendrá los bits descifrados
-	binary = fopen(BINARY_FILENAME_SECOND.c_str(), "ab+");
-	//se realiza la permutación inicial
+	//se abre el archivo en el que se escribirá el texto encriptado en binario
+	output = fopen(OUTPUT_FILENAME.c_str(), "ab+");
+	//permutacion inicial
 	for (int i = 0; i < 64; i++)
 		initialPermutation(i, plain[i]);
 
-	//Se separa la cadena de 64 bits en dos cadenas de 32 bits
-	//una para la izquierda y otra para la derecha
+	//Se guardan los 32 bits de la cadena en el arreglo izquierdo
 	for (int i = 0; i < 32; i++)
 		LEFT[0][i] = IPtext[i];
-
+	//Se guardan los otros 32 bits de la cadena en el arreglo derecho
 	for (int i = 32; i < 64; i++)
 		RIGHT[0][i - 32] = IPtext[i];
 
-	//Descifrado de los valores
-	for (int k = 1; k < 17; k++) {
-		cipher(k);
-
+	//Ciclo con las 16 rondas de cifrado
+	for (int k = 1; k < 17; k++) 
+	{
+		cipher(k, 0);
+		//traslado de los valores de la derecha a los valores de la izquierda
 		for (int i = 0; i < 32; i++)
 			LEFT[k][i] = RIGHT[k - 1][i];
 	}
 
-	//permutacion final
+	//permutación final
 	for (int i = 0; i < 64; i++) 
 	{
 		if (i < 32)
@@ -466,18 +477,166 @@ void Decryption(long int plain[])
 			CIPHER[i] = LEFT[16][i - 32];
 		finalPermutation(i, CIPHER[i]);
 	}
-	//Escritura de los valores en el archivo correspondiente
+
+	//escritura del texto encriptado en el archivo
 	for (int i = 0; i < 64; i++)
-		fprintf(binary, "%d", ENCRYPTED[i]);
-	//cierre del archivo de escritura
-	fclose(binary);
+		fprintf(output, "%d", ENCRYPTED[i]);
+	//cierre de archivo
+	fclose(output);
+}
+
+/*
+
+STAGE 1 - Permutacion del bloque de caracteres
+
+-Funcion para desencriptar una cadena
+-Parametro : cadena de bits plana
+-Retorno : --
+*/
+void *textPermutation(void * args)
+{
+	//casteo a long int
+	
+	printf("Estoy en 1");
+
+
+	FILE* in = fopen(INPUT_FILENAME.c_str(), "rb");
+	long int plain[FILE_INPUT_SIZE * 64];
+	int i = -1;
+	char ch;
+
+	while (!feof(in)) 
+	{
+		//Por cada caracter en el archivo
+		ch = getc(in);
+		plain[++i] = ch - 48;
+	}
+
+	fclose(in);
+
+
+	for(int y=0;y<FILE_INPUT_SIZE;y++)
+	{	
+		
+		//EN ESTO ES LO QUE TENGO DUDA
+		//plain = plain + y * 64;
+		
+		int controller = 0;
+
+		pthread_mutex_lock(&pipeline_mutex1);
+		printf("Estoy en 1");
+		//se realiza la permutación inicial
+		for (int i = 0; i < 64; i++)
+			initialPermutation(i, plain[i]);
+
+		//Se separa la cadena de 64 bits en dos cadenas de 32 bits
+		//una para la izquierda y otra para la derecha
+		for (int i = 0; i < 32; i++)
+			LEFT[0][i] = IPtext[i];
+
+		for (int i = 32; i < 64; i++)
+			RIGHT[0][i - 32] = IPtext[i];
+
+		//Descifrado de los valores
+		for (int k = 1; k < 17; k++) {
+			cipher(k, 1);
+
+			for (int i = 0; i < 32; i++)
+				LEFT[k][i] = RIGHT[k - 1][i];
+		}
+
+		//permutacion final
+		for (int i = 0; i < 64; i++) 
+		{
+			if (i < 32)
+				CIPHER[i] = RIGHT[16][i];
+			else
+				CIPHER[i] = LEFT[16][i - 32];
+			finalPermutation(i, CIPHER[i]);
+		}
+		
+		controller = 1;
+
+		if(controller == 1){
+			pthread_cond_signal(&stage1);
+		}
+
+		pthread_mutex_unlock(&pipeline_mutex1);
+	}
+
+	pthread_exit(NULL);
+	
+}
+
+/*
+	STAGE 2 - Escritura del texto permutado a archivo, aun en binario
+*/
+void* writeBinaryOnFile(void *args){
+	//Escritura de los valores en el archivo correspondiente
+	for(int k=0;k<FILE_INPUT_SIZE;k++){
+
+		pthread_mutex_lock(&pipeline_mutex1);
+		pthread_cond_wait(&stage1, &pipeline_mutex1);
+		printf("Estoy en 2");
+		for (int i = 0; i < 64; i++){
+			fprintf(binary, "%d", ENCRYPTED[i]);
+		}
+
+		pthread_cond_signal(&stage2);
+		pthread_mutex_unlock(&pipeline_mutex1);
+			
+	}
+	pthread_exit(NULL);	
+}
+
+/*
+-Funcion para convertir los caracteres en numeros binarios
+-Parametro : arreglo de caracteres
+-Retorno : --
+*/
+void convertToBits(int ch[])
+{
+	int value = 0;
+	for (int i = 7; i >= 0; i--)
+		value += (int)pow(2, i) * ch[7 - i];
+	fprintf(output, "%c", value);
+}
+
+/*
+
+STAGE 3 - Conversion de texto encriptado en binario, a caracteres
+
+-Funcion para convertir los valores en binario en caracteres ASCII
+-Parametro :--
+-Retorno : --
+*/
+void * convertBitsToChar(void *args)
+{
+	for(int z=0;z<FILE_INPUT_SIZE;z++){
+
+		pthread_mutex_lock(&pipeline_mutex2);
+		pthread_cond_wait(&stage2, &pipeline_mutex2);
+
+		printf("Estoy en 3");
+
+		output = fopen(OUTPUT_FILENAME.c_str(), "ab+");
+		for (int i = 0; i < 64; i = i + BLOCK_CAPACITY)
+			convertToBits(&ENCRYPTED[i]);
+		fclose(output);
+
+		pthread_mutex_unlock(&pipeline_mutex2);
+
+	}
+
+	pthread_exit(NULL);		
+
 }
 
 /*
 -Funcion para convertir la clave de 56 bits a 48 bits y asi poderla usar en cada ronda.
 	estas claves son almacendas en el arreglo de 48 bits
 -Parametros : fila, columna y valor  
--Retorno: --
+-Retrono: --
 */
 void key56to48(int round, int pos, int text)
 {
@@ -494,7 +653,7 @@ void key56to48(int round, int pos, int text)
 /*
 -Funcion para convertir la clave leida de 64 bits a 56 bits
 -Parametros : posición el bit en el arreglo, valor del bit 
--Retorno: 
+-Retrono: 
 */
 int key64to56(int pos, int text)
 {
@@ -505,76 +664,6 @@ int key64to56(int pos, int text)
 	key56bit[i] = text;
 }
 
-void* shift1(void* arg)
-{	
-	pthread_mutex_lock(&mutexLock);
-	int k;
-	long number = (long) arg;
-	int n = (int) number;
-	int shift, x;
-	
-	if((n - 100) > 100)
-	{
-		shift = 2;
-		x = n - 200;
-	}
-	else
-	{
-		shift = 1;
-		x = n - 100;
-	}
-	
-	//Se obtienen el primer o los dos primeros valores del arreglo y se guardan en backup
-	for (int i = 0; i < shift; i++) backup[x - 1][i] = C[x - 1][i];
-		
-	//Este ciclo asigna los valores de la fila anterior a la posterio sin contar el primer valor
-	//o los dos primeros (esto depende del shift)
-	for (int i = 0; i < (28 - shift); i++) C[x][i] = C[x - 1][i + shift];
-	k = 0;
-	
-	//el o los valores tomados ahora se agregan a la parte final del arreglo
-	//y es así como se completa para la parte izquierda el desplazamiento a la izquierda
-	for (int i = 28 - shift; i < 28; i++) C[x][i] = backup[x - 1][k++];
-			
-	for (int i = 0; i < 28; i++) CD[x][i] = C[x][i];
-	pthread_mutex_unlock(&mutexLock);
-}
-
-void* shift2(void* arg)
-{	
-	pthread_mutex_lock(&mutexLock);
-	int k;
-	long number = (long) arg;
-	int n = (int) number;
-	int shift, x;
-	
-	if((n - 100) > 100)
-	{
-		shift = 2;
-		x = n - 200;
-	}
-	else
-	{
-		shift = 1;
-		x = n - 100;
-	}
-	 
-	//Se obtienen el primer o los dos primeros valores del arreglo y se guardan en backup
-	for (int i = 0; i < shift; i++) backup[x - 1][i] = D[x - 1][i];
-		
-	//Este ciclo asigna los valores de la fila anterior a la posterio sin contar el primer valor
-	//o los dos primeros (esto depende del shift)
-	for (int i = 0; i < (28 - shift); i++) D[x][i] = D[x - 1][i + shift];
-	k = 0;
-	
-	//el o los valores tomados ahora se agregan a la parte final del arreglo
-	//y es así como se completa para la parte derecha el desplazamiento a la izquierda
-	for (int i = 28 - shift; i < 28; i++) D[x][i] = backup[x - 1][k++];
-			
-	for (int i = 28; i < 56; i++) CD[x][i] = D[x][i - 28];
-	pthread_mutex_unlock(&mutexLock);
-}
-
 /*
 -Funcion para convertir la clave leida de 64 bits a 48 bits
 -Parametros : arreglo que contiene la clave en binario (longitud de 64 bits)
@@ -582,6 +671,10 @@ void* shift2(void* arg)
 */
 void key64to48(unsigned int key[])
 {
+	int k, backup[17][2];
+	int CD[17][56];
+	int C[17][28], D[17][28];
+
 	//Ciclo que realiza la caida de paridad, conversión de 64 a 56 bits
 	for (int i = 0; i < 64; i++)
 		key64to56(i, key[i]);
@@ -600,72 +693,139 @@ void key64to48(unsigned int key[])
 	{
 		//nos indicará la cantidad de desplazamientos a la izquierda que se deben hacer (1 o 2)
 		int shift = SHIFTS[x - 1];
-		long r = (shift*100) + x;
-		
-		//creacion de pthreads, uno por cada parte (left, right) de la llave
-		pthread_create(&(ptids[16-x]), NULL, shift1, (void *)r);
-		pthread_create(&(ptids[32-x]), NULL, shift2, (void *)r);
-		
-		//join de los pthreads
-		pthread_join(ptids[16-x], NULL);
-		pthread_join(ptids[32-x], NULL);
+
+		//Se obtienen el primer o los dos primeros valores del arreglo y se guardan en backup
+		for (int i = 0; i < shift; i++)
+			backup[x - 1][i] = C[x - 1][i];
+		//Este ciclo asigna los valores de la fila anterior a la posterio sin contar el primer valor
+		//o los dos primeros (esto depende del shift)
+		for (int i = 0; i < (28 - shift); i++)
+			C[x][i] = C[x - 1][i + shift];
+		k = 0;
+		//el o los valores tomados ahora se agregan a la parte final del arreglo
+		//y es así como se completa para la parte izquierda el desplazamiento a la izquierda
+		for (int i = 28 - shift; i < 28; i++)
+			C[x][i] = backup[x - 1][k++];
+
+		//Se obtienen el primer o los dos primeros valores del arreglo y se guardan en backup
+		for (int i = 0; i < shift; i++)
+			backup[x - 1][i] = D[x - 1][i];
+		//Este ciclo asigna los valores de la fila anterior a la posterio sin contar el primer valor
+		//o los dos primeros (esto depende del shift)
+		for (int i = 0; i < (28 - shift); i++)
+			D[x][i] = D[x - 1][i + shift];
+		k = 0;
+		//el o los valores tomados ahora se agregan a la parte final del arreglo
+		//y es así como se completa para la parte derecha el desplazamiento a la izquierda
+		for (int i = 28 - shift; i < 28; i++)
+			D[x][i] = backup[x - 1][k++];
+	}
+
+	//Unión de los dos bloques de 28 bits para formar una clave de 56 bits
+	//Esto se realiza 16 veces obteniendo así las 16 claves para las 16 rondas
+	for (int j = 0; j < 17; j++) 
+	{
+		for (int i = 0; i < 28; i++)
+			CD[j][i] = C[j][i];
+		for (int i = 28; i < 56; i++)
+			CD[j][i] = D[j][i - 28];
 	}
 
 	//Conversión de las claves de 56 bits generadas a 48 bits para que estas sean aplicadas
 	//en cada ronda
-	
 	for (int j = 1; j < 17; j++)
 		for (int i = 0; i < 56; i++)
 			key56to48(j, i, CD[j][i]);
 }
 
-/*
--Funcion para convertir los caracteres en numeros binarios
--Parametro : arreglo de caracteres
--Retorno : --
-*/
-void convertToBits(int ch[])
+void decrypt()
 {
-	int value = 0;
-	for (int i = 7; i >= 0; i--)
-		value += (int)pow(2, i) * ch[7 - i];
-	fprintf(output, "%c", value);
-}
-
-/*
--Funcion para convertir los valores en binario en caracteres ASCII
--Parametro :--
--Retorno : --
-*/
-int bittochar()
-{
-	output = fopen(OUTPUT_FILENAME.c_str(), "ab+");
-	for (int i = 0; i < 64; i = i + 8)
-		convertToBits(&ENCRYPTED[i]);
-	fclose(output);
-}
-
-void decrypt(long int n)
-{
+	/*
 	FILE* in = fopen(INPUT_FILENAME.c_str(), "rb");
-	long int plain[n * 64];
+	long int plain[FILE_INPUT_SIZE * 64];
 	int i = -1;
 	char ch;
 
 	while (!feof(in)) 
 	{
+		//Por cada caracter en el archivo
 		ch = getc(in);
 		plain[++i] = ch - 48;
 	}
+	*/
+
+	binary = fopen(BINARY_FILENAME_SECOND.c_str(), "ab+");
+	//REMOVER EL FOR, Y APLICAR VARIABLES CONDICIONALES
+	//for (int i = 0; i < FILE_INPUT_SIZE; i++) //FILE_INPUT_SIZE - cantidad de bloques
+	//{
+		/**************
+			STAGES
+		**************/
+
+
+		int t1=1,t2=2,t3=3;
 	
-	for (int i = 0; i < n; i++) 
-	{
-		Decryption(plain + i * 64);
-		bittochar();
-	}
-	fclose(in);
+		pthread_mutex_init(&pipeline_mutex1, NULL);
+		pthread_mutex_init(&pipeline_mutex2, NULL);
+		pthread_cond_init (&stage1, NULL);
+		pthread_cond_init (&stage2, NULL);
+  		pthread_attr_init(&attr);
+  		pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
+		
+		pthread_create(&threads[0], &attr, convertBitsToChar, (void *)t1);
+		pthread_create(&threads[1], &attr, writeBinaryOnFile, (void *)t2);
+		pthread_create(&threads[2], &attr, textPermutation, (void *)t3);
+
+		//Destruccion de los hilos
+		  for (int i = 0; i < 3; i++) {
+    		pthread_join(threads[i], NULL);
+  		}
+
+		pthread_attr_destroy(&attr);
+		pthread_mutex_destroy(&pipeline_mutex1);
+		pthread_mutex_destroy(&pipeline_mutex2);
+		pthread_cond_destroy(&stage1);
+		pthread_cond_destroy(&stage2);
+
+		
+
+
+		//textPermutation(plain + i * 64);
+		//writeBinaryOnFile();
+		//convertBitsToChar();
+	//}
+	//cierre del archivo de escritura
+	fclose(binary);
 }
 
+/*
+-Funcion para convertir encriptar utilizando algoritmo DES
+-Parametro : --
+-Retorno : --
+*/
+void encrypt()
+{
+	//se abre el archivo que contiene los bits que pertenecen al mensaje a encriptar en forma de lectura
+	FILE* inBinary = fopen(BINARY_FILENAME.c_str(), "rb");
+
+	//se crea un arreglo de tamaño (cantidad de caractares) * 64
+	long int plain[FILE_INPUT_SIZE * 64];
+	int i = -1;
+	char ch;
+
+	while (!feof(inBinary)) 
+	{
+		//obtencion de binario en binario y se añade al arreglo que contiene todos los numeros en binarios
+		ch = getc(inBinary);
+		plain[++i] = ch - 48;
+	}
+
+	//Encripción
+	for (int i = 0; i < FILE_INPUT_SIZE; i++)
+		Encryption(plain + 64 * i);
+	//salida del archivo
+	fclose(inBinary);
+}
 
 /*
 -Funcion para generar las claves
@@ -715,18 +875,20 @@ long int findFileSize()
 		size = ftell(inp);
 	
 	//Si el archivo tiene una cantidad de bits que no es divisible entre 8, se rellena con espacios
-	int count_space = 8 - (size % 8);
-	if(size % 8 != 0){
+	int count_space = BLOCK_CAPACITY - (size % BLOCK_CAPACITY);
+	long int totalSize = size;
+
+	if(size % BLOCK_CAPACITY != 0){
 		int i = 0;
 		while(i < count_space) {
 			fprintf(inp, "%c", " ");
 			i++;
 		}
+		totalSize += count_space;
 	}
 	//cierre del archivo
 	fclose(inp);
 	//retorno
-	long int totalSize = (size + count_space);
 	return  totalSize;
 }
 
@@ -747,6 +909,7 @@ static void error_exit(const char *format, ...)
 
 int main(int argc, char **argv)
 {
+
 	if (argc < 4)
 	{
 		puts(HELP);
@@ -775,29 +938,33 @@ int main(int argc, char **argv)
 	OUTPUT_FILENAME = argv[3];
 	KEYS_FILENAME = argv[4];
 
-    pthread_mutex_init(&mutexLock, NULL);
-
 	//creacion de las 16 llaves de encripción
 	create16Keys();
-	
-	
+
 	//se calcula la cantidad de caracteres dentro del archivo de lectura y se divide en 8 
-	long int fileSize = findFileSize() / 8;
+	FILE_INPUT_SIZE = findFileSize() / BLOCK_CAPACITY;
 
-	convertCharToBit(fileSize);
+	convertCharToBit();
 
-	if (!strcmp(argv[1], ACTION_DECRYPT))
+	if (!strcmp(argv[1], ACTION_ENCRYPT))
 	{
-		//Funcion de encripcion
-		decrypt(fileSize);
+		//Encripcion
+		encrypt();
+	}
+	else if (!strcmp(argv[1], ACTION_DECRYPT))
+	{
+		//Desencripcion
+		decrypt();
 	}
 	else
 	{
 		puts(HELP);
 		return 1;
 	}
+
+	//Print work done successfully
 	
-	pthread_mutex_destroy(&mutexLock);
-	pthread_exit(NULL);
+
+
 	return 0;
 }
