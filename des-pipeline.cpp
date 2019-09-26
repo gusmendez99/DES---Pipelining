@@ -45,8 +45,11 @@ FILE *input, *output, *keys, *binary;
 #define ROUNDS 16
 #define ACTION_ENCRYPT "-e"
 #define ACTION_DECRYPT "-d"
-pthread_mutex_t pipeline_mutex;
-pthread_cond_t pipeline_threshold_cv;
+
+pthread_mutex_t pipeline_mutex1, pipeline_mutex2;
+pthread_cond_t stage1, stage2;
+pthread_t threads[3];
+pthread_attr_t attr;
 
 const char HELP[] =
   "\n"
@@ -490,51 +493,94 @@ STAGE 1 - Permutacion del bloque de caracteres
 -Parametro : cadena de bits plana
 -Retorno : --
 */
-void textPermutation(long int plain[])
+void *textPermutation(void * args)
 {
-	
-	//se realiza la permutación inicial
-	for (int i = 0; i < 64; i++)
-		initialPermutation(i, plain[i]);
+	//casteo a long int
 
-	//Se separa la cadena de 64 bits en dos cadenas de 32 bits
-	//una para la izquierda y otra para la derecha
-	for (int i = 0; i < 32; i++)
-		LEFT[0][i] = IPtext[i];
+	FILE* in = fopen(INPUT_FILENAME.c_str(), "rb");
+	long int plain[FILE_INPUT_SIZE * 64];
+	int i = -1;
+	char ch;
 
-	for (int i = 32; i < 64; i++)
-		RIGHT[0][i - 32] = IPtext[i];
-
-	//Descifrado de los valores
-	for (int k = 1; k < 17; k++) {
-		cipher(k, 1);
-
-		for (int i = 0; i < 32; i++)
-			LEFT[k][i] = RIGHT[k - 1][i];
-	}
-
-	//permutacion final
-	for (int i = 0; i < 64; i++) 
+	while (!feof(in)) 
 	{
-		if (i < 32)
-			CIPHER[i] = RIGHT[16][i];
-		else
-			CIPHER[i] = LEFT[16][i - 32];
-		finalPermutation(i, CIPHER[i]);
+		//Por cada caracter en el archivo
+		ch = getc(in);
+		plain[++i] = ch - 48;
 	}
 
-	
-	
+	fclose(in);
+
+
+	for(int y=0;y<FILE_INPUT_SIZE;y++)
+	{
+		//plain = plain + y * 64;
+		
+		int controller = 0;
+
+		pthread_mutex_lock(&pipeline_mutex1);
+		//se realiza la permutación inicial
+		for (int i = 0; i < 64; i++)
+			initialPermutation(i, plain[i]);
+
+		//Se separa la cadena de 64 bits en dos cadenas de 32 bits
+		//una para la izquierda y otra para la derecha
+		for (int i = 0; i < 32; i++)
+			LEFT[0][i] = IPtext[i];
+
+		for (int i = 32; i < 64; i++)
+			RIGHT[0][i - 32] = IPtext[i];
+
+		//Descifrado de los valores
+		for (int k = 1; k < 17; k++) {
+			cipher(k, 1);
+
+			for (int i = 0; i < 32; i++)
+				LEFT[k][i] = RIGHT[k - 1][i];
+		}
+
+		//permutacion final
+		for (int i = 0; i < 64; i++) 
+		{
+			if (i < 32)
+				CIPHER[i] = RIGHT[16][i];
+			else
+				CIPHER[i] = LEFT[16][i - 32];
+			finalPermutation(i, CIPHER[i]);
+		}
+		
+		controller = 1;
+
+		if(controller == 1){
+			pthread_cond_signal(&stage1);
+		}
+
+		pthread_mutex_unlock(&pipeline_mutex1);
+	}
+
+	pthread_exit(NULL);
 	
 }
 
 /*
 	STAGE 2 - Escritura del texto permutado a archivo, aun en binario
 */
-void writeBinaryOnFile(){
+void* writeBinaryOnFile(void *args){
 	//Escritura de los valores en el archivo correspondiente
-	for (int i = 0; i < 64; i++)
-		fprintf(binary, "%d", ENCRYPTED[i]);
+	for(int k=0;k<FILE_INPUT_SIZE;k++){
+
+		pthread_mutex_lock(&pipeline_mutex1);
+		pthread_cond_wait(&stage1, &pipeline_mutex1);
+
+		for (int i = 0; i < 64; i++){
+			fprintf(binary, "%d", ENCRYPTED[i]);
+		}
+
+		pthread_cond_signal(&stage2);
+		pthread_mutex_unlock(&pipeline_mutex1);
+		pthread_exit(NULL);		
+	}
+
 }
 
 /*
@@ -558,12 +604,24 @@ STAGE 3 - Conversion de texto encriptado en binario, a caracteres
 -Parametro :--
 -Retorno : --
 */
-int convertBitsToChar()
+void * convertBitsToChar(void *args)
 {
-	output = fopen(OUTPUT_FILENAME.c_str(), "ab+");
-	for (int i = 0; i < 64; i = i + BLOCK_CAPACITY)
-		convertToBits(&ENCRYPTED[i]);
-	fclose(output);
+	for(int z=0;z<FILE_INPUT_SIZE;z++){
+
+		pthread_mutex_lock(&pipeline_mutex1);
+		pthread_cond_wait(&stage2, &pipeline_mutex1);
+
+		output = fopen(OUTPUT_FILENAME.c_str(), "ab+");
+		for (int i = 0; i < 64; i = i + BLOCK_CAPACITY)
+			convertToBits(&ENCRYPTED[i]);
+		fclose(output);
+
+		pthread_mutex_unlock(&pipeline_mutex1);
+
+	}
+
+	pthread_exit(NULL);		
+
 }
 
 /*
@@ -674,6 +732,7 @@ void key64to48(unsigned int key[])
 
 void decrypt()
 {
+	/*
 	FILE* in = fopen(INPUT_FILENAME.c_str(), "rb");
 	long int plain[FILE_INPUT_SIZE * 64];
 	int i = -1;
@@ -685,21 +744,37 @@ void decrypt()
 		ch = getc(in);
 		plain[++i] = ch - 48;
 	}
-	
+	*/
+
 	binary = fopen(BINARY_FILENAME_SECOND.c_str(), "ab+");
 	//REMOVER EL FOR, Y APLICAR VARIABLES CONDICIONALES
-	for (int i = 0; i < FILE_INPUT_SIZE; i++) 
-	{
+	//for (int i = 0; i < FILE_INPUT_SIZE; i++) //FILE_INPUT_SIZE - cantidad de bloques
+	//{
 		/**************
 			STAGES
 		**************/
-		textPermutation(plain + i * 64);
-		writeBinaryOnFile();
-		convertBitsToChar();
-	}
+
+
+		int t1=1,t2=2,t3=3;
+	
+		pthread_mutex_init(&pipeline_mutex1, NULL);
+		pthread_mutex_init(&pipeline_mutex2, NULL);
+		pthread_cond_init (&stage1, NULL);
+		pthread_cond_init (&stage2, NULL);
+  		pthread_attr_init(&attr);
+  		pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
+		
+		pthread_create(&threads[0], &attr, textPermutation, (void *)t1);
+		pthread_create(&threads[1], &attr, writeBinaryOnFile, (void *)t2);
+		pthread_create(&threads[2], &attr, convertBitsToChar, (void *)t3);
+
+
+		//textPermutation(plain + i * 64);
+		//writeBinaryOnFile();
+		//convertBitsToChar();
+	//}
 	//cierre del archivo de escritura
 	fclose(binary);
-	fclose(in);
 }
 
 /*
@@ -813,7 +888,7 @@ static void error_exit(const char *format, ...)
 
 int main(int argc, char **argv)
 {
-	
+
 	if (argc < 4)
 	{
 		puts(HELP);
