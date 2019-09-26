@@ -30,16 +30,23 @@ USO: 	$ ./des -d inputFile outputFile keys
 #include <time.h>
 #include <string.h>
 #include <string>
+#include <pthread.h>
+
 using namespace std;
 
 static string INPUT_FILENAME, OUTPUT_FILENAME, KEYS_FILENAME, 
 		BINARY_FILENAME = "bits.txt", BINARY_FILENAME_SECOND = "bitsDecrypt.txt";
+
+static int FILE_INPUT_SIZE;
+
 FILE *input, *output, *keys, *binary;
 #define BLOCK_CAPACITY 8        //Bytes
 #define THREADS 3 
 #define ROUNDS 16
 #define ACTION_ENCRYPT "-e"
 #define ACTION_DECRYPT "-d"
+pthread_mutex_t pipeline_mutex;
+pthread_cond_t pipeline_threshold_cv;
 
 const char HELP[] =
   "\n"
@@ -306,12 +313,12 @@ int ToBits(int value)
 int SBox(int XORtext[])
 {
 	int k = 0;
-	for (int i = 0; i < 8; i++)
+	for (int i = 0; i < BLOCK_CAPACITY; i++)
 		for (int j = 0; j < 6; j++)
 			X[i][j] = XORtext[k++];
 
 	int value;
-	for (int i = 0; i < 8; i++) 
+	for (int i = 0; i < BLOCK_CAPACITY; i++) 
 	{
 		value = F1(i);
 		ToBits(value);
@@ -403,10 +410,10 @@ void convertToBinary(int n)
 
 /*
 -Funcion para convertir los caracteres del archivo input en numero binarios
--Parametro : cantidad de caracteres en el archivo input / 8
+-Parametro : 
 -Retorno : --
 */
-int convertCharToBit(long int n)
+int convertCharToBit()
 {
 	//Se abre el archivo de entrada como lectura
 	FILE* inp = fopen(INPUT_FILENAME.c_str(), "rb");
@@ -414,7 +421,7 @@ int convertCharToBit(long int n)
 	binary = fopen(BINARY_FILENAME.c_str(), "wb+");
 	char ch;
 	//Se multiplica por 8 para determinar la cantidad total de caracteres en el archivo de entrada
-	int i = n * 8;
+	int i = FILE_INPUT_SIZE * BLOCK_CAPACITY;
 	while (i) 
 	{
 		//Se lee caracter por caracter el archivo de entrada gracias a al función fgetc()
@@ -476,14 +483,16 @@ void Encryption(long int plain[])
 }
 
 /*
+
+STAGE 1 - Permutacion del bloque de caracteres
+
 -Funcion para desencriptar una cadena
 -Parametro : cadena de bits plana
 -Retorno : --
 */
-void Decryption(long int plain[])
+void textPermutation(long int plain[])
 {
-	//se abre el archivo que contendrá los bits descifrados
-	binary = fopen(BINARY_FILENAME_SECOND.c_str(), "ab+");
+	
 	//se realiza la permutación inicial
 	for (int i = 0; i < 64; i++)
 		initialPermutation(i, plain[i]);
@@ -513,11 +522,19 @@ void Decryption(long int plain[])
 			CIPHER[i] = LEFT[16][i - 32];
 		finalPermutation(i, CIPHER[i]);
 	}
+
+	
+	
+	
+}
+
+/*
+	STAGE 2 - Escritura del texto permutado a archivo, aun en binario
+*/
+void writeBinaryOnFile(){
 	//Escritura de los valores en el archivo correspondiente
 	for (int i = 0; i < 64; i++)
 		fprintf(binary, "%d", ENCRYPTED[i]);
-	//cierre del archivo de escritura
-	fclose(binary);
 }
 
 /*
@@ -534,14 +551,17 @@ void convertToBits(int ch[])
 }
 
 /*
+
+STAGE 3 - Conversion de texto encriptado en binario, a caracteres
+
 -Funcion para convertir los valores en binario en caracteres ASCII
 -Parametro :--
 -Retorno : --
 */
-int bittochar()
+int convertBitsToChar()
 {
 	output = fopen(OUTPUT_FILENAME.c_str(), "ab+");
-	for (int i = 0; i < 64; i = i + 8)
+	for (int i = 0; i < 64; i = i + BLOCK_CAPACITY)
 		convertToBits(&ENCRYPTED[i]);
 	fclose(output);
 }
@@ -652,39 +672,48 @@ void key64to48(unsigned int key[])
 			key56to48(j, i, CD[j][i]);
 }
 
-void decrypt(long int n)
+void decrypt()
 {
 	FILE* in = fopen(INPUT_FILENAME.c_str(), "rb");
-	long int plain[n * 64];
+	long int plain[FILE_INPUT_SIZE * 64];
 	int i = -1;
 	char ch;
 
 	while (!feof(in)) 
 	{
+		//Por cada caracter en el archivo
 		ch = getc(in);
 		plain[++i] = ch - 48;
 	}
 	
-	for (int i = 0; i < n; i++) 
+	binary = fopen(BINARY_FILENAME_SECOND.c_str(), "ab+");
+	//REMOVER EL FOR, Y APLICAR VARIABLES CONDICIONALES
+	for (int i = 0; i < FILE_INPUT_SIZE; i++) 
 	{
-		Decryption(plain + i * 64);
-		bittochar();
+		/**************
+			STAGES
+		**************/
+		textPermutation(plain + i * 64);
+		writeBinaryOnFile();
+		convertBitsToChar();
 	}
+	//cierre del archivo de escritura
+	fclose(binary);
 	fclose(in);
 }
 
 /*
 -Funcion para convertir encriptar utilizando algoritmo DES
--Parametro : cantidad de caracteres en el archivo input 
+-Parametro : --
 -Retorno : --
 */
-void encrypt(long int n)
+void encrypt()
 {
 	//se abre el archivo que contiene los bits que pertenecen al mensaje a encriptar en forma de lectura
 	FILE* inBinary = fopen(BINARY_FILENAME.c_str(), "rb");
 
 	//se crea un arreglo de tamaño (cantidad de caractares) * 64
-	long int plain[n * 64];
+	long int plain[FILE_INPUT_SIZE * 64];
 	int i = -1;
 	char ch;
 
@@ -696,7 +725,7 @@ void encrypt(long int n)
 	}
 
 	//Encripción
-	for (int i = 0; i < n; i++)
+	for (int i = 0; i < FILE_INPUT_SIZE; i++)
 		Encryption(plain + 64 * i);
 	//salida del archivo
 	fclose(inBinary);
@@ -750,18 +779,20 @@ long int findFileSize()
 		size = ftell(inp);
 	
 	//Si el archivo tiene una cantidad de bits que no es divisible entre 8, se rellena con espacios
-	int count_space = 8 - (size % 8);
-	if(size % 8 != 0){
+	int count_space = BLOCK_CAPACITY - (size % BLOCK_CAPACITY);
+	long int totalSize = size;
+
+	if(size % BLOCK_CAPACITY != 0){
 		int i = 0;
 		while(i < count_space) {
 			fprintf(inp, "%c", " ");
 			i++;
 		}
+		totalSize += count_space;
 	}
 	//cierre del archivo
 	fclose(inp);
 	//retorno
-	long int totalSize = (size + count_space);
 	return  totalSize;
 }
 
@@ -815,19 +846,19 @@ int main(int argc, char **argv)
 	create16Keys();
 
 	//se calcula la cantidad de caracteres dentro del archivo de lectura y se divide en 8 
-	long int fileSize = findFileSize() / 8;
+	FILE_INPUT_SIZE = findFileSize() / BLOCK_CAPACITY;
 
-	convertCharToBit(fileSize);
+	convertCharToBit();
 
 	if (!strcmp(argv[1], ACTION_ENCRYPT))
 	{
 		//Encripcion
-		encrypt(fileSize);
+		encrypt();
 	}
 	else if (!strcmp(argv[1], ACTION_DECRYPT))
 	{
 		//Desencripcion
-		decrypt(fileSize);
+		decrypt();
 	}
 	else
 	{

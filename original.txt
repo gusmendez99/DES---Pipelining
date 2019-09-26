@@ -1,4 +1,4 @@
 Tutorial de programacion
 
-Para iniciarnos desde cero podemos utilizar alguno de estos lenguajes: Java, Python, C, C++, C#, Visual Basic .net, Go, Ruby, Kotlin o Delphi con estos lenguajes introducimos los conceptos basicos del planteo de algori­tmos utilizando el desarrollo de diagramas de flujos para facilitar el entendimiento. Cualquiera de estos 10 tutoriales puede emplear para iniciarse en la programacion.
-Aprendiendo uno de estos lenguajes en forma correcta facilmente luego puede aprender alguno de los otros.
+Para iniciarnos desde cero podemos utilizar alguno de estos lenguajes: Java, Python, C, C++, C#, Visual Basic .net, Go, Ruby, Kotlin o Delphi con estos lenguajes introducimos los conceptos basicos del planteo de algoritmos utilizando el desarrollo de diagramas de flujos para facilitar el entendimiento. Cualquiera de estos 10 tutoriales puede emplear para iniciarse en la programacion.
+Aprendiendo uno de estos lenguajes en forma correcta facilmente luego se puede aprender alguno de los otros lenguajes.

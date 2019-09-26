@@ -19,9 +19,7 @@ Commands:
 
 ## Authors
 * Gustavo Mendez
-* Gerardo Mendez
 * Roberto Figueroa
-* Diego Estrada
 
 ## License
 This project is licensed under the MIT License
